@@ -13,3 +13,8 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Dataset y artefactos de entrenamiento del modelo (pesan varios GB, no van al repo)
+/ml/data/
+/ml/__pycache__/
+*.pyc
