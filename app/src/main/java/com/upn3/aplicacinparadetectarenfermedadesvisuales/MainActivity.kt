@@ -5,7 +5,9 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.AssetFileDescriptor
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -16,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -28,6 +31,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontStyle
@@ -193,15 +198,44 @@ fun PantallaCamara(navController: NavController) {
         }
     }
 
-    if (hasCameraPermission) {
-        var resultados by remember { mutableStateOf(listOf<Pair<String, Float>>()) }
+    var resultados by remember { mutableStateOf(listOf<Pair<String, Float>>()) }
+    var imagenSubida by remember { mutableStateOf<Bitmap?>(null) }
 
-        Box(modifier = Modifier.fillMaxSize()) {
-            CameraPreview(
-                onImageAnalyzed = { bitmap, rotation ->
-                    resultados = clasificarImagen(context, bitmap, rotation)
+    // selector de galeria para subir una foto de un ojo en vez de usar la camara en vivo
+    val selectorGaleria = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val inputStream = context.contentResolver.openInputStream(uri)
+                val bitmapCargado = BitmapFactory.decodeStream(inputStream)
+                inputStream?.close()
+                if (bitmapCargado != null) {
+                    imagenSubida = bitmapCargado
+                    resultados = clasificarImagen(context, bitmapCargado, 0)
                 }
-            )
+            } catch (e: Exception) {
+                Log.e("PantallaCamara", "Error al cargar la foto: ${e.message}")
+            }
+        }
+    }
+
+    if (hasCameraPermission) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (imagenSubida != null) {
+                Image(
+                    bitmap = imagenSubida!!.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                CameraPreview(
+                    onImageAnalyzed = { bitmap, rotation ->
+                        resultados = clasificarImagen(context, bitmap, rotation)
+                    }
+                )
+            }
 
             Column(
                 modifier = Modifier
@@ -242,6 +276,25 @@ fun PantallaCamara(navController: NavController) {
                 }
 
                 Button(
+                    onClick = { selectorGaleria.launch("image/*") },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                ) {
+                    Text(if (imagenSubida == null) "Subir foto de un ojo" else "Subir otra foto")
+                }
+
+                if (imagenSubida != null) {
+                    OutlinedButton(
+                        onClick = {
+                            imagenSubida = null
+                            resultados = emptyList()
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    ) {
+                        Text("Volver a la cámara en vivo")
+                    }
+                }
+
+                Button(
                     onClick = { navController.popBackStack() },
                     modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)
@@ -252,7 +305,37 @@ fun PantallaCamara(navController: NavController) {
         }
     } else {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("Se requiere permiso de cámara para continuar")
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Se requiere permiso de cámara para continuar")
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(onClick = { selectorGaleria.launch("image/*") }) {
+                    Text("O subir una foto de un ojo")
+                }
+
+                if (imagenSubida != null) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Image(
+                        bitmap = imagenSubida!!.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.height(200.dp),
+                        contentScale = ContentScale.Fit
+                    )
+                    resultados.take(3).forEach { resultado ->
+                        Text(text = "${resultado.first}: ${(resultado.second * 100).toInt()}%")
+                    }
+                    if (resultados.isNotEmpty()) {
+                        Button(onClick = {
+                            val mejorResultado = resultados.first()
+                            ultimaEnfermedadDetectada = mejorResultado.first
+                            ultimaConfianzaDetectada = mejorResultado.second
+                            historialDeAnalisis.add(mejorResultado)
+                            navController.navigate("analysis_result/${mejorResultado.first}/${mejorResultado.second}")
+                        }) {
+                            Text("Ver Detalle")
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -304,7 +387,7 @@ fun CameraPreview(onImageAnalyzed: (Bitmap, Int) -> Unit) {
                 cameraProvider.unbindAll()
                 cameraProvider.bindToLifecycle(
                     lifecycleOwner,
-                    CameraSelector.DEFAULT_BACK_CAMERA,
+                    CameraSelector.DEFAULT_FRONT_CAMERA,
                     preview,
                     imageAnalysis
                 )
